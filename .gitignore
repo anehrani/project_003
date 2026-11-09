@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Builds
+dist/
+build/
+*.tsbuildinfo
+.next/
+out/
+
+# Env & secrets — NEVER commit real tokens or keys
+.env
+.env.local
+.env*.local
+*.pem
+
+# DB
+*.db
+*.sqlite
+db/custom.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+bun.lock
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Coverage
+coverage/

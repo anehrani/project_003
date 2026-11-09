@@ -1,0 +1,20 @@
+{
+  "name": "budgetguard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BudgetGuard — Autopilot for Meta ad budgets. Give us your ad + budget. We spend it optimally on Meta, 24/7.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm run test --workspace @budgetguard/engine",
+    "typecheck": "tsc -p packages/engine --noEmit && tsc -p packages/db --noEmit && tsc -p packages/meta --noEmit && tsc -p apps/worker --noEmit",
+    "worker": "npm run dev --workspace @budgetguard/worker",
+    "worker:check-once": "npm run check-once --workspace @budgetguard/worker",
+    "web": "npm run dev --workspace @budgetguard/web"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

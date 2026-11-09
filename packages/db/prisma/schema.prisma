@@ -1,0 +1,173 @@
+// BudgetGuard — Prisma schema (PostgreSQL)
+// Spec §6. Money is always stored as integer cents.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  STARTER
+  PRO
+  AGENCY
+}
+
+enum AccountStatus {
+  ACTIVE
+  EXPIRED
+  DISCONNECTED
+}
+
+enum Strategy {
+  balanced
+  protect
+  aggressive
+}
+
+enum ActionType {
+  pause
+  resume
+  increase_budget
+  decrease_budget
+  alert
+  none
+}
+
+enum RuleId {
+  G1
+  G2
+  G3
+  B1
+  B2
+  B3
+  B4
+  MANUAL
+}
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  email          String    @unique
+  passwordHash   String    @map("password_hash")
+  plan           Plan      @default(STARTER)
+  slackWebhookUrl String?  @map("slack_webhook_url")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  metaAccounts MetaAccount[]
+
+  @@map("users")
+}
+
+model MetaAccount {
+  id              String        @id @default(uuid()) @db.Uuid
+  userId          String        @map("user_id") @db.Uuid
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Meta ad account id, e.g. act_123456
+  metaAdAccountId String        @map("meta_ad_account_id")
+  metaAccountName String        @map("meta_account_name")
+
+  /// AES-256-GCM encrypted at rest (see src/crypto.ts). NEVER logged.
+  accessToken     String        @map("access_token")
+  tokenExpiresAt  DateTime      @map("token_expires_at")
+  status          AccountStatus @default(ACTIVE)
+  currency        String        @default("USD")
+
+  campaigns Campaign[]
+
+  @@unique([userId, metaAdAccountId])
+  @@map("meta_accounts")
+}
+
+/// "The thing we protect" (spec §6)
+model Campaign {
+  id                 String    @id @default(uuid()) @db.Uuid
+  metaAccountId      String    @map("meta_account_id") @db.Uuid
+  metaAccount        MetaAccount @relation(fields: [metaAccountId], references: [id], onDelete: Cascade)
+  metaCampaignId     String    @map("meta_campaign_id")
+  name               String
+
+  strategy           Strategy  @default(balanced)
+  monthlyBudgetCents Int       @map("monthly_budget_cents")
+  dailyCapCents      Int       @map("daily_cap_cents")
+  targetCpaCents     Int?      @map("target_cpa_cents")
+  targetRoas         Decimal?  @map("target_roas") @db.Decimal(6, 2)
+
+  isAutopilotOn      Boolean   @default(true) @map("is_autopilot_on")
+  /// Safety switch: engine runs and logs every decision, but no Meta mutation happens.
+  dryRun             Boolean   @default(true)
+  lastCheckedAt      DateTime? @map("last_checked_at")
+
+  rules      Rule[]
+  actionLogs ActionLog[]
+  dailyStats DailyStat[]
+
+  @@unique([metaAccountId, metaCampaignId])
+  @@map("campaigns")
+}
+
+/// Pre-seeded per strategy for MVP; becomes the custom rule builder post-MVP (spec §6).
+model Rule {
+  id         String  @id @default(uuid()) @db.Uuid
+  campaignId String  @map("campaign_id") @db.Uuid
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  /// stop_loss | scale_winner | slow_bleed
+  ruleType   String  @map("rule_type")
+  /// e.g. {"spend_threshold_cents": 5000, "lookback_days": 3}
+  configJson Json    @map("config_json")
+  isActive   Boolean @default(true) @map("is_active")
+
+  @@map("rules")
+}
+
+/// Audit trail — non-negotiable (spec §6). Every decision is written here,
+/// including alerts and no-ops, in live AND dry-run mode.
+model ActionLog {
+  id              String     @id @default(uuid()) @db.Uuid
+  campaignId      String     @map("campaign_id") @db.Uuid
+  campaign        Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  adsetId         String?    @map("adset_id")
+  adsetName       String?    @map("adset_name")
+  action          ActionType
+  ruleId          RuleId?    @map("rule_id")
+  /// Human-readable: "CPA $58 > Target $25, Spend $62, 0 purchases"
+  reason          String
+  metricsSnapshot Json?      @map("metrics_snapshot")
+  oldValueCents   Int?       @map("old_value_cents")
+  newValueCents   Int?       @map("new_value_cents")
+
+  /// true = engine decision recorded but NOT executed against Meta
+  isDryRun        Boolean    @default(false) @map("is_dry_run")
+  /// Set when a G1 pause is auto-resumed at 00:00 next day.
+  autoResumedAt   DateTime?  @map("auto_resumed_at")
+
+  /// Meta API response (sanitized — never contains tokens)
+  metaApiResponse Json?      @map("meta_api_response")
+  createdAt       DateTime   @default(now()) @map("created_at")
+
+  @@index([campaignId, createdAt])
+  @@map("action_logs")
+}
+
+/// Cache of daily campaign metrics so the dashboard never queries the Meta API (spec §6).
+model DailyStat {
+  id          String   @id @default(uuid()) @db.Uuid
+  campaignId  String   @map("campaign_id") @db.Uuid
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  date        DateTime @db.Date
+
+  spendCents  Int      @map("spend_cents")
+  revenueCents Int     @map("revenue_cents")
+  roas        Decimal? @db.Decimal(8, 2)
+  cpaCents    Int?     @map("cpa_cents")
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+
+  @@unique([campaignId, date])
+  @@map("daily_stats")
+}

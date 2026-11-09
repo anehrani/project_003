@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate Prisma client
+        run: npm run db:generate --workspace @budgetguard/db
+
+      - name: Engine unit tests
+        run: npm test
+
+      - name: Typecheck
+        run: |
+          npx tsc -p packages/engine --noEmit
+          npx tsc -p packages/db --noEmit
+          npx tsc -p packages/meta --noEmit
+          npx tsc -p apps/worker --noEmit
+          npx tsc -p apps/web --noEmit
