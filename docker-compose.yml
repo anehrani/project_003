@@ -1,0 +1,23 @@
+# Local dev/test database — start with `npm run db:up`, stop with `docker compose down`.
+# Connection string for .env:
+#   DATABASE_URL=postgresql://budgetguard:budgetguard@localhost:5432/budgetguard
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: budgetguard-db
+    environment:
+      POSTGRES_USER: budgetguard
+      POSTGRES_PASSWORD: budgetguard
+      POSTGRES_DB: budgetguard
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U budgetguard']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

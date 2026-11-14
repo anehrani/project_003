@@ -8,11 +8,13 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "npm run test --workspace @budgetguard/engine",
-    "typecheck": "tsc -p packages/engine --noEmit && tsc -p packages/db --noEmit && tsc -p packages/meta --noEmit && tsc -p apps/worker --noEmit",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "tsc -p packages/engine --noEmit && tsc -p packages/db --noEmit && tsc -p packages/meta --noEmit && tsc -p apps/worker --noEmit && tsc -p scripts --noEmit",
     "worker": "npm run dev --workspace @budgetguard/worker",
     "worker:check-once": "npm run check-once --workspace @budgetguard/worker",
-    "web": "npm run dev --workspace @budgetguard/web"
+    "web": "npm run dev --workspace @budgetguard/web",
+    "db:up": "docker compose up -d db",
+    "db:seed": "tsx scripts/seed-dev.ts"
   },
   "engines": {
     "node": ">=20"

@@ -22,7 +22,7 @@ jobs:
       - name: Generate Prisma client
         run: npm run db:generate --workspace @budgetguard/db
 
-      - name: Engine unit tests
+      - name: Unit tests (engine + Meta client)
         run: npm test
 
       - name: Typecheck
@@ -32,3 +32,4 @@ jobs:
           npx tsc -p packages/meta --noEmit
           npx tsc -p apps/worker --noEmit
           npx tsc -p apps/web --noEmit
+          npx tsc -p scripts --noEmit

@@ -76,16 +76,20 @@ cp .env.example .env
 #    → set DATABASE_URL, APP_ENCRYPTION_KEY (openssl rand -hex 32), WORKER_SECRET
 
 # 3. Database
+npm run db:up                                   # Postgres in Docker
 cd packages/db && npx prisma db push && cd ../..
 
-# 4. Test the engine (35 tests — the trust layer)
+# 4. Seed a dev campaign (dryRun=true — safe)
+npm run db:seed
+
+# 5. Test the engine + Meta client (vitest, fully offline)
 npm test
 
-# 5. Run the worker (DRY_RUN=true by default — safe)
+# 6. Run the worker (DRY_RUN=true by default — safe)
 npm run worker            # cron every 15 min + HTTP trigger on :3001
 npm run worker:check-once # single check, exits — for external crons
 
-# 6. Run the web app
+# 7. Run the web app
 npm run web               # Next.js on :3000
 ```
 
@@ -94,6 +98,55 @@ npm run web               # Next.js on :3000
 PostgreSQL. Six tables (spec §6): `users`, `meta_accounts`, `campaigns`, `rules`,
 `action_logs`, `daily_stats`. See `packages/db/prisma/schema.prisma`.
 The dashboard reads `daily_stats` — never the Meta API.
+
+## Testing — three tiers
+
+`npm test` runs every workspace's vitest suite offline: the engine rules (35 tests)
+plus the Meta client against a **mocked Graph API** (requests, normalization, error
+redaction, rate-limit retry, token exchange). Beyond that, the app is tested against
+a real Meta **test ad account**:
+
+| Tier | What you verify | Needs real Meta? | Needs DB? |
+| --- | --- | --- | --- |
+| 0 — unit | Engine rules, client parsing/errors/retries | no (mocked) | no |
+| 1 — dry-run, dummy token | Worker loop end-to-end, `action_logs` rows | no | yes |
+| 2 — dry-run vs test account | Real insights fetched, decisions logged, **zero mutations** | yes | yes |
+| 3 — live on test account | Real pauses / budget writes on fake money | yes | yes |
+
+### Local setup (Tier 0/1)
+
+```bash
+npm run db:up                                # Postgres in Docker (docker-compose.yml)
+npm run db:push --workspace @budgetguard/db  # create tables
+npm run db:seed                              # dev user + test campaign, dryRun=true
+npm run worker:check-once                    # one full check cycle
+psql "$DATABASE_URL" -c "select rule_id, action, is_dry_run, reason from action_logs order by created_at desc limit 20;"
+```
+
+With no real token, Meta calls fail with code 190 — the worker records the error,
+marks the token expired and exits cleanly. That *is* Tier 1: the loop, logging and
+failure paths all work without touching Meta.
+
+### Tier 2/3 — Meta test ad account
+
+1. In Business Settings → **Ad Accounts**, create an account marked **Test**
+   (fake money, ads never reach real people). Create a fake campaign + ad set in it.
+2. [Graph API Explorer](https://developers.facebook.com/tools/explorer) → select your
+   app → add `ads_read` + `ads_management` → pick the **test ad account** in the
+   token dropdown → Generate Access Token.
+3. Re-seed with the real token (stored AES-256-GCM encrypted):
+   ```bash
+   DEV_META_TOKEN=EAAB... DEV_AD_ACCOUNT_ID=act_123 DEV_CAMPAIGN_ID=456789 npm run db:seed
+   ```
+4. `npm run worker:check-once` — the global `DRY_RUN` default plus the campaign's
+   `dry_run=true` mean every decision is logged, nothing is mutated (Tier 2).
+5. Tier 3: flip **one** campaign only, keep the global switch as belt-and-braces:
+   ```bash
+   psql "$DATABASE_URL" -c "update campaigns set dry_run = false where id = '<campaign-uuid>';"
+   ```
+   `DRY_RUN=true` in `.env` still wins — remove it there only when you truly mean it.
+   This is also the phase that produces the `ads_management` usage evidence Meta
+   wants for **App Review**.
 
 ## Deployment (Railway / Render / Fly.io)
 
