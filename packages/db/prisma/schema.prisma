@@ -56,38 +56,40 @@ model User {
   slackWebhookUrl String?  @map("slack_webhook_url")
   createdAt      DateTime  @default(now()) @map("created_at")
 
-  metaAccounts MetaAccount[]
+  googleAccounts GoogleAccount[]
 
   @@map("users")
 }
 
-model MetaAccount {
+model GoogleAccount {
   id              String        @id @default(uuid()) @db.Uuid
   userId          String        @map("user_id") @db.Uuid
   user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /// Meta ad account id, e.g. act_123456
-  metaAdAccountId String        @map("meta_ad_account_id")
-  metaAccountName String        @map("meta_account_name")
+  /// Google Ads customer id — digits only, e.g. 1234567890 (display: 123-456-7890)
+  customerId      String        @map("customer_id")
+  customerName    String        @map("customer_name")
 
-  /// AES-256-GCM encrypted at rest (see src/crypto.ts). NEVER logged.
-  accessToken     String        @map("access_token")
-  tokenExpiresAt  DateTime      @map("token_expires_at")
+  /// OAuth2 refresh token — does not expire unless revoked. AES-256-GCM
+  /// encrypted at rest (see src/crypto.ts). NEVER logged.
+  refreshToken    String        @map("refresh_token")
+  /// Manager account (MCC) customer id when the token is held by an MCC.
+  loginCustomerId String?       @map("login_customer_id")
   status          AccountStatus @default(ACTIVE)
   currency        String        @default("USD")
 
   campaigns Campaign[]
 
-  @@unique([userId, metaAdAccountId])
-  @@map("meta_accounts")
+  @@unique([userId, customerId])
+  @@map("google_accounts")
 }
 
 /// "The thing we protect" (spec §6)
 model Campaign {
-  id                 String    @id @default(uuid()) @db.Uuid
-  metaAccountId      String    @map("meta_account_id") @db.Uuid
-  metaAccount        MetaAccount @relation(fields: [metaAccountId], references: [id], onDelete: Cascade)
-  metaCampaignId     String    @map("meta_campaign_id")
+  id                 String       @id @default(uuid()) @db.Uuid
+  googleAccountId    String       @map("google_account_id") @db.Uuid
+  googleAccount      GoogleAccount @relation(fields: [googleAccountId], references: [id], onDelete: Cascade)
+  googleCampaignId   String       @map("google_campaign_id")
   name               String
 
   strategy           Strategy  @default(balanced)
@@ -97,7 +99,7 @@ model Campaign {
   targetRoas         Decimal?  @map("target_roas") @db.Decimal(6, 2)
 
   isAutopilotOn      Boolean   @default(true) @map("is_autopilot_on")
-  /// Safety switch: engine runs and logs every decision, but no Meta mutation happens.
+  /// Safety switch: engine runs and logs every decision, but no Google mutation happens.
   dryRun             Boolean   @default(true)
   lastCheckedAt      DateTime? @map("last_checked_at")
 
@@ -105,7 +107,7 @@ model Campaign {
   actionLogs ActionLog[]
   dailyStats DailyStat[]
 
-  @@unique([metaAccountId, metaCampaignId])
+  @@unique([googleAccountId, googleCampaignId])
   @@map("campaigns")
 }
 
@@ -127,34 +129,34 @@ model Rule {
 /// Audit trail — non-negotiable (spec §6). Every decision is written here,
 /// including alerts and no-ops, in live AND dry-run mode.
 model ActionLog {
-  id              String     @id @default(uuid()) @db.Uuid
-  campaignId      String     @map("campaign_id") @db.Uuid
-  campaign        Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  id               String     @id @default(uuid()) @db.Uuid
+  campaignId       String     @map("campaign_id") @db.Uuid
+  campaign         Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
-  adsetId         String?    @map("adset_id")
-  adsetName       String?    @map("adset_name")
-  action          ActionType
-  ruleId          RuleId?    @map("rule_id")
+  adGroupId        String?    @map("ad_group_id")
+  adGroupName      String?    @map("ad_group_name")
+  action           ActionType
+  ruleId           RuleId?    @map("rule_id")
   /// Human-readable: "CPA $58 > Target $25, Spend $62, 0 purchases"
-  reason          String
+  reason           String
   metricsSnapshot Json?      @map("metrics_snapshot")
   oldValueCents   Int?       @map("old_value_cents")
   newValueCents   Int?       @map("new_value_cents")
 
-  /// true = engine decision recorded but NOT executed against Meta
+  /// true = engine decision recorded but NOT executed against Google Ads
   isDryRun        Boolean    @default(false) @map("is_dry_run")
   /// Set when a G1 pause is auto-resumed at 00:00 next day.
   autoResumedAt   DateTime?  @map("auto_resumed_at")
 
-  /// Meta API response (sanitized — never contains tokens)
-  metaApiResponse Json?      @map("meta_api_response")
-  createdAt       DateTime   @default(now()) @map("created_at")
+  /// Ad platform API response (sanitized — never contains tokens)
+  platformResponse Json?     @map("platform_response")
+  createdAt        DateTime  @default(now()) @map("created_at")
 
   @@index([campaignId, createdAt])
   @@map("action_logs")
 }
 
-/// Cache of daily campaign metrics so the dashboard never queries the Meta API (spec §6).
+/// Cache of daily campaign metrics so the dashboard never queries the Google Ads API (spec §6).
 model DailyStat {
   id          String   @id @default(uuid()) @db.Uuid
   campaignId  String   @map("campaign_id") @db.Uuid

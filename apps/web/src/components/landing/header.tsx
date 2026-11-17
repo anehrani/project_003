@@ -21,7 +21,7 @@ export function Header() {
           </span>
           <span className="text-lg font-semibold tracking-tight">BudgetGuard</span>
           <span className="ml-1 hidden rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 sm:inline">
-            Autopilot for Meta budget
+            Autopilot for Google Ads budget
           </span>
         </a>
 

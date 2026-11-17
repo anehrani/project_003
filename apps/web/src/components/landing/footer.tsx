@@ -11,10 +11,10 @@ export function Footer() {
             <ShieldCheck className="h-4 w-4" aria-hidden />
           </span>
           <span className="font-medium text-zinc-200">BudgetGuard</span>
-          <span className="text-sm">— Autopilot for Meta budget</span>
+          <span className="text-sm">— Autopilot for Google Ads budget</span>
         </div>
         <p className="text-xs">
-          MVP in active development · Not affiliated with Meta Platforms, Inc.
+          MVP in active development · Not affiliated with Google LLC.
         </p>
       </div>
     </footer>

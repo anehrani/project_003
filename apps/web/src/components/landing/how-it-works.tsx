@@ -8,8 +8,8 @@ import { Badge } from '@/components/ui/badge';
 const STEPS = [
   {
     icon: PlugZap,
-    title: 'Connect Meta',
-    body: 'One OAuth popup, official Marketing API. We request ads_read + ads_management — nothing more.',
+    title: 'Connect Google Ads',
+    body: 'One OAuth popup, official Google Ads API. We request only the adwords scope — read + manage your campaigns, nothing more.',
     time: '60 seconds',
   },
   {

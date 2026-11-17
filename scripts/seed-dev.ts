@@ -9,9 +9,11 @@
  *   npm run db:seed
  *
  * Optional env overrides (Tier 2/3 testing — see README "Testing"):
- *   DEV_META_TOKEN      real token for a Meta TEST ad account (default: dummy token)
- *   DEV_AD_ACCOUNT_ID   act_xxx of the TEST ad account (default: act_TEST)
- *   DEV_CAMPAIGN_ID     numeric Meta campaign id (default: 999999999999999)
+ *   DEV_REFRESH_TOKEN   real OAuth refresh token for a Google Ads TEST account
+ *                       (default: dummy token — calls fail with HTTP 401, fine for Tier 1)
+ *   DEV_CUSTOMER_ID     Google Ads customer id, 10 digits (default: 9999999999)
+ *   DEV_CAMPAIGN_ID     numeric Google campaign id (default: 1111111111)
+ *   DEV_LOGIN_CUSTOMER_ID  MCC customer id, 10 digits (optional)
  */
 
 import 'dotenv/config';
@@ -21,10 +23,6 @@ import { PrismaClient } from '@prisma/client';
 
 const DEV_USER_EMAIL = 'dev@budgetguard.local';
 
-function in60Days(): Date {
-  return new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
-}
-
 async function main(): Promise<void> {
   const encryptionKey = process.env.APP_ENCRYPTION_KEY;
   if (!encryptionKey) {
@@ -32,9 +30,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const token = process.env.DEV_META_TOKEN ?? 'DEVTEST_DUMMY_TOKEN_NOT_REAL';
-  const adAccountId = process.env.DEV_AD_ACCOUNT_ID ?? 'act_TEST';
-  const metaCampaignId = process.env.DEV_CAMPAIGN_ID ?? '999999999999999';
+  const refreshToken = process.env.DEV_REFRESH_TOKEN ?? 'DEVTEST_DUMMY_REFRESH_TOKEN_NOT_REAL';
+  const customerId = (process.env.DEV_CUSTOMER_ID ?? '9999999999').replace(/\D/g, '');
+  const googleCampaignId = process.env.DEV_CAMPAIGN_ID ?? '1111111111';
+  const loginCustomerId = process.env.DEV_LOGIN_CUSTOMER_ID?.replace(/\D/g, '') || null;
+  if (!/^\d{10}$/.test(customerId)) {
+    console.error(`Invalid DEV_CUSTOMER_ID "${customerId}" — expected 10 digits.`);
+    process.exit(1);
+  }
 
   const db = new PrismaClient();
   try {
@@ -44,35 +47,35 @@ async function main(): Promise<void> {
       create: { email: DEV_USER_EMAIL, passwordHash: 'dev-only-no-login' },
     });
 
-    const account = await db.metaAccount.upsert({
+    const account = await db.googleAccount.upsert({
       where: {
-        userId_metaAdAccountId: { userId: user.id, metaAdAccountId: adAccountId },
+        userId_customerId: { userId: user.id, customerId },
       },
       update: {
-        accessToken: encryptToken(token, encryptionKey),
-        tokenExpiresAt: in60Days(),
+        refreshToken: encryptToken(refreshToken, encryptionKey),
+        loginCustomerId,
         status: 'ACTIVE',
       },
       create: {
         userId: user.id,
-        metaAdAccountId: adAccountId,
-        metaAccountName: 'Dev Test Ad Account',
-        accessToken: encryptToken(token, encryptionKey),
-        tokenExpiresAt: in60Days(),
+        customerId,
+        customerName: 'Dev Test Ads Account',
+        refreshToken: encryptToken(refreshToken, encryptionKey),
+        loginCustomerId,
         currency: 'USD',
       },
     });
 
     const campaign = await db.campaign.upsert({
       where: {
-        metaAccountId_metaCampaignId: { metaAccountId: account.id, metaCampaignId },
+        googleAccountId_googleCampaignId: { googleAccountId: account.id, googleCampaignId },
       },
       // Re-seeding always resets to the SAFE state (dry-run on) — never silently
       // flips a campaign back to live mutation.
       update: { dryRun: true },
       create: {
-        metaAccountId: account.id,
-        metaCampaignId,
+        googleAccountId: account.id,
+        googleCampaignId,
         name: 'Dev Test Campaign',
         strategy: 'balanced',
         monthlyBudgetCents: 150000, // $1,500
@@ -85,13 +88,13 @@ async function main(): Promise<void> {
 
     console.info('Seeded dev environment:');
     console.info(`  user        ${user.email}`);
-    console.info(`  ad account  ${account.metaAdAccountId} (status ${account.status})`);
-    console.info(`  campaign    ${campaign.name} [${campaign.metaCampaignId}]`);
+    console.info(`  ads account ${account.customerId}${loginCustomerId ? ` (via MCC ${loginCustomerId})` : ''} (status ${account.status})`);
+    console.info(`  campaign    ${campaign.name} [${campaign.googleCampaignId}]`);
     console.info(`              strategy=${campaign.strategy} autopilot=${campaign.isAutopilotOn} dryRun=${campaign.dryRun}`);
     console.info(
-      process.env.DEV_META_TOKEN
-        ? '  token       real DEV_META_TOKEN stored (AES-256-GCM encrypted at rest)'
-        : '  token       dummy — Meta calls will fail with code 190 (fine for Tier-1 dry-run tests)',
+      process.env.DEV_REFRESH_TOKEN
+        ? '  token       real DEV_REFRESH_TOKEN stored (AES-256-GCM encrypted at rest)'
+        : '  token       dummy — Google calls will fail with HTTP 401 (fine for Tier-1 dry-run tests)',
     );
     console.info('\nNext:  npm run worker:check-once');
   } catch (err) {

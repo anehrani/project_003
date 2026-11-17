@@ -110,7 +110,7 @@ export const ACTION_LOG: ActionLogRow[] = [
   },
   {
     time: 'Nov 6 00:00',
-    adSet: 'All ad sets',
+    adSet: 'All ad groups',
     action: 'resumed',
     detail: 'Auto-resumed',
     reason: 'New day started — daily cap pause lifted automatically',
@@ -118,7 +118,7 @@ export const ACTION_LOG: ActionLogRow[] = [
   },
   {
     time: 'Nov 5 21:30',
-    adSet: 'All ad sets',
+    adSet: 'All ad groups',
     action: 'paused',
     detail: 'Paused',
     reason: 'Daily cap reached: $50.00 ≥ $50 cap — budget protected',
@@ -157,7 +157,7 @@ export const PLANS = [
   {
     name: 'Starter',
     price: 29,
-    blurb: 'For one store getting serious about Meta.',
+    blurb: 'For one store getting serious about Google Ads.',
     features: ['1 ad account', 'Up to $2k/mo ad spend', 'Balanced Autopilot strategy', 'Dashboard + action log', 'Email alerts', '14-day free trial'],
     cta: 'Start free trial',
     featured: false,

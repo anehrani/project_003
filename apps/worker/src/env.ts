@@ -22,20 +22,25 @@ export const env = {
   get workerSecret(): string {
     return optional('WORKER_SECRET', 'dev-worker-secret');
   },
-  get metaApiVersion(): string {
-    return optional('META_API_VERSION', 'v23.0');
+  get googleAdsApiVersion(): string {
+    return optional('GOOGLE_ADS_API_VERSION', 'v26');
+  },
+  /** Legacy header — optional since the Sept 2026 Cloud-project access model. */
+  get googleAdsDeveloperToken(): string {
+    return optional('GOOGLE_ADS_DEVELOPER_TOKEN', '');
+  },
+  /** OAuth2 client of OUR Google Cloud project (same for all users). */
+  get googleAdsClientId(): string {
+    return required('GOOGLE_ADS_CLIENT_ID');
+  },
+  get googleAdsClientSecret(): string {
+    return required('GOOGLE_ADS_CLIENT_SECRET');
   },
   get port(): number {
     return parseInt(optional('PORT', '3001'), 10);
   },
-  /** Global kill switch — when true, no Meta mutation ever happens. */
+  /** Global kill switch — when true, no Google Ads mutation ever happens. */
   get globalDryRun(): boolean {
     return optional('DRY_RUN', 'true').toLowerCase() !== 'false';
-  },
-  get metaAppId(): string {
-    return optional('META_APP_ID', '');
-  },
-  get metaAppSecret(): string {
-    return optional('META_APP_SECRET', '');
   },
 };

@@ -10,7 +10,7 @@ const TRUST = [
   { icon: CreditCard, label: 'No credit card' },
   { icon: Clock, label: '3-minute setup' },
   { icon: XCircle, label: 'Cancel anytime' },
-  { icon: PlugZap, label: 'Official Meta API' },
+  { icon: PlugZap, label: 'Official Google Ads API' },
 ];
 
 export function Hero() {
@@ -33,10 +33,10 @@ export function Hero() {
           </Badge>
           <h1 className="text-balance text-4xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-6xl">
             Give us your ad + budget.{' '}
-            <span className="text-emerald-400">We spend it optimally on Meta, 24/7.</span>
+            <span className="text-emerald-400">We spend it optimally on Google Ads, 24/7.</span>
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-relaxed text-zinc-400 sm:text-lg">
-            BudgetGuard is the autopilot for your Meta ad budget. It pauses losers, scales
+            BudgetGuard is the autopilot for your Google Ads budget. It pauses losers, scales
             winners and hard-caps your spend while you sleep — and explains every decision in
             plain English. No rule builder. No 2am panic.
           </p>

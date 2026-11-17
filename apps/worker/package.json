@@ -2,7 +2,7 @@
   "name": "@budgetguard/worker",
   "version": "0.1.0",
   "private": true,
-  "description": "BudgetGuard worker — runs the engine every 15 minutes and executes actions against Meta.",
+  "description": "BudgetGuard worker — runs the engine every 15 minutes and executes actions against Google Ads.",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -13,7 +13,7 @@
   "dependencies": {
     "@budgetguard/db": "*",
     "@budgetguard/engine": "*",
-    "@budgetguard/meta": "*",
+    "@budgetguard/google": "*",
     "dotenv": "^16.4.7",
     "node-cron": "^3.0.3"
   },

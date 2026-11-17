@@ -13,19 +13,19 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "BudgetGuard — Autopilot for Meta Budget",
+  title: "BudgetGuard — Autopilot for Google Ads Budget",
   description:
-    "Give us your ad + budget. We spend it optimally on Meta, 24/7. BudgetGuard pauses losers, scales winners and hard-caps your spend — no rule builder required.",
+    "Give us your ad + budget. We spend it optimally on Google Ads, 24/7. BudgetGuard pauses losers, scales winners and hard-caps your spend — no rule builder required.",
   keywords: [
-    "Meta ads",
-    "Facebook ads automation",
+    "Google Ads",
+    "Google Ads automation",
     "ad budget guard",
     "ROAS",
     "autopilot bidding",
     "Shopify ads",
   ],
   openGraph: {
-    title: "BudgetGuard — Autopilot for Meta Budget",
+    title: "BudgetGuard — Autopilot for Google Ads Budget",
     description:
       "Pauses losers. Scales winners. Hard-caps your spend while you sleep.",
     siteName: "BudgetGuard",

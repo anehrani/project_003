@@ -1,16 +1,19 @@
 /**
  * runCheckAll() — the 15-minute heartbeat (spec §7 Worker).
  *
- * For each campaign with autopilot ON and an active Meta account:
- *   1. Resume G1-paused ad sets if the day rolled over (auto-resume at 00:00)
- *   2. Fetch insights: campaign (today, MTD) + each ad set (3d, 7d, 30d)
+ * For each campaign with autopilot ON and an active Google Ads account:
+ *   1. Resume G1-paused ad groups if the day rolled over (auto-resume at 00:00)
+ *   2. Fetch metrics: campaign (today, MTD) + each ad group (3d, 7d, 30d)
  *   3. Build an EngineInput snapshot and run the pure engine
  *   4. Execute actions — or only LOG them when dryRun is on
  *   5. Write every decision to action_logs (spec: even no-ops, for debugging)
- *   6. Upsert daily_stats (dashboard cache — never hit Meta from the UI)
+ *   6. Upsert daily_stats (dashboard cache — never hit Google Ads from the UI)
+ *
+ * Google-specific: ad groups have no own budget — budget actions from the
+ * engine are executed on the ad group's CAMPAIGN BUDGET (campaignBudgets:mutate).
  *
  * Idempotency at the execution layer (defense in depth — the engine already
- * guards): pause calls are skipped for ad sets Meta reports as non-ACTIVE,
+ * guards): pause calls are skipped for ad groups Google reports as non-ENABLED,
  * and budget changes re-check the 6h throttle using the action_logs table.
  */
 
@@ -27,7 +30,7 @@ import {
   type Strategy,
   type WindowMetrics,
 } from '@budgetguard/engine';
-import { MetaClient, TOKEN_ERROR_CODES } from '@budgetguard/meta';
+import { GoogleAdsClient, TOKEN_ERROR_STATUSES } from '@budgetguard/google';
 import { Prisma } from '@prisma/client';
 
 import { sendAlert } from './alerts';
@@ -54,8 +57,8 @@ export async function runCheckAll(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
   const campaigns = await db.campaign.findMany({
-    where: { isAutopilotOn: true, metaAccount: { status: 'ACTIVE' } },
-    include: { metaAccount: true },
+    where: { isAutopilotOn: true, googleAccount: { status: 'ACTIVE' } },
+    include: { googleAccount: true },
   });
 
   console.info(`[check-all] starting: ${campaigns.length} campaign(s) with autopilot ON`);
@@ -75,9 +78,9 @@ export async function runCheckAll(): Promise<CheckResult[]> {
         executed: 0,
         errors: [message],
       });
-      // Token problems need human action — alert the user.
-      if (TOKEN_ERROR_CODES.some((c) => message.includes(`code ${c}`))) {
-        await markTokenExpired(campaign.metaAccountId);
+      // Auth problems need human action — mark the account so the user reconnects.
+      if (TOKEN_ERROR_STATUSES.some((s) => message.includes(`HTTP ${s}`))) {
+        await markTokenExpired(campaign.googleAccountId);
       }
     }
   }
@@ -87,7 +90,27 @@ export async function runCheckAll(): Promise<CheckResult[]> {
 }
 
 // ---------------------------------------------------------------------------
-// G1 auto-resume: ad sets paused by the daily cap resume at 00:00 next day.
+// Client factory — per-account Google Ads client from the stored refresh token
+// ---------------------------------------------------------------------------
+
+function makeClient(account: {
+  customerId: string;
+  refreshToken: string;
+  loginCustomerId: string | null;
+}): GoogleAdsClient {
+  return new GoogleAdsClient({
+    customerId: account.customerId,
+    refreshToken: decryptToken(account.refreshToken, env.appEncryptionKey),
+    clientId: env.googleAdsClientId,
+    clientSecret: env.googleAdsClientSecret,
+    loginCustomerId: account.loginCustomerId ?? undefined,
+    developerToken: env.googleAdsDeveloperToken || undefined,
+    apiVersion: env.googleAdsApiVersion,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// G1 auto-resume: ad groups paused by the daily cap resume at 00:00 next day.
 // ---------------------------------------------------------------------------
 
 async function resumeExpiredGuardrailPauses(): Promise<number> {
@@ -103,33 +126,30 @@ async function resumeExpiredGuardrailPauses(): Promise<number> {
       createdAt: { lt: startOfToday },
       isDryRun: false,
     },
-    include: { campaign: { include: { metaAccount: true } } },
+    include: { campaign: { include: { googleAccount: true } } },
     take: 200,
   });
 
   let resumed = 0;
   for (const row of stalePauses) {
-    const adsetIds = ((row.metricsSnapshot as any)?.adsetIds ?? []) as string[];
-    if (adsetIds.length === 0) continue;
+    const adGroupIds = ((row.metricsSnapshot as any)?.adGroupIds ?? []) as string[];
+    if (adGroupIds.length === 0) continue;
 
-    const client = new MetaClient(
-      decryptToken(row.campaign.metaAccount.accessToken, env.appEncryptionKey),
-      { apiVersion: env.metaApiVersion },
-    );
-    const adSets = await client.listAdSets(row.campaign.metaCampaignId);
-    const stillPaused = adSets.filter((s) => adsetIds.includes(s.id) && s.status === 'PAUSED');
+    const client = makeClient(row.campaign.googleAccount);
+    const adGroups = await client.listAdGroups(row.campaign.googleCampaignId);
+    const stillPaused = adGroups.filter((g) => adGroupIds.includes(g.id) && g.status === 'PAUSED');
 
-    for (const adset of stillPaused) {
-      const res = await client.activateAdSet(adset.id);
+    for (const group of stillPaused) {
+      const res = await client.activateAdGroup(group.id);
       await db.actionLog.create({
         data: {
           campaignId: row.campaignId,
-          adsetId: adset.id,
-          adsetName: adset.name,
+          adGroupId: group.id,
+          adGroupName: group.name,
           action: 'resume',
           ruleId: 'G1',
-          reason: 'New day started — resuming ad set paused by daily cap (auto-resume 00:00)',
-          metaApiResponse: { success: res.success },
+          reason: 'New day started — resuming ad group paused by daily cap (auto-resume 00:00)',
+          platformResponse: { success: res.success },
         },
       });
       resumed += 1;
@@ -144,32 +164,26 @@ async function resumeExpiredGuardrailPauses(): Promise<number> {
 // ---------------------------------------------------------------------------
 
 type CampaignWithAccount = Prisma.CampaignGetPayload<{
-  include: { metaAccount: true };
+  include: { googleAccount: true };
 }>;
 
 async function checkCampaign(campaign: CampaignWithAccount): Promise<CheckResult> {
   const db = getDb();
-  const account = campaign.metaAccount;
+  const account = campaign.googleAccount;
   const dryRun = env.globalDryRun || campaign.dryRun;
 
-  const token = decryptToken(account.accessToken, env.appEncryptionKey);
-  const client = new MetaClient(token, {
-    apiVersion: env.metaApiVersion,
-    onUsage: (u) => {
-      if (u.callCount >= 75) {
-        console.warn(`[meta] usage ${u.callCount}% for ${u.accountId} — approaching throttle`);
-      }
-    },
-  });
+  const client = makeClient(account);
 
   // ---- Gather state -----------------------------------------------------
-  const [metaAdSets, today, month] = await Promise.all([
-    client.listAdSets(campaign.metaCampaignId),
-    client.getInsights(campaign.metaCampaignId, { datePreset: 'today' }),
-    client.getInsights(campaign.metaCampaignId, { datePreset: 'this_month' }),
+  const [adGroups, today, month] = await Promise.all([
+    client.listAdGroups(campaign.googleCampaignId),
+    client.getMetrics('campaign', campaign.googleCampaignId, { datePreset: 'today' }),
+    client.getMetrics('campaign', campaign.googleCampaignId, { datePreset: 'this_month' }),
   ]);
 
-  const relevantAdSets = metaAdSets.filter((s) => s.status === 'ACTIVE' || s.status === 'PAUSED');
+  const relevantAdGroups = adGroups.filter(
+    (g) => g.status === 'ENABLED' || g.status === 'PAUSED',
+  );
 
   // Budget-change timestamps (throttle source of truth = action_logs)
   const dayAgo = new Date(Date.now() - 24 * 3600_000);
@@ -182,28 +196,28 @@ async function checkCampaign(campaign: CampaignWithAccount): Promise<CheckResult
     },
     orderBy: { createdAt: 'desc' },
   });
-  const lastBudgetChangeByAdset = new Map<string, Date>();
+  const lastBudgetChangeByAdGroup = new Map<string, Date>();
   for (const row of recentBudgetChanges) {
-    if (row.adsetId && !lastBudgetChangeByAdset.has(row.adsetId)) {
-      lastBudgetChangeByAdset.set(row.adsetId, row.createdAt);
+    if (row.adGroupId && !lastBudgetChangeByAdGroup.has(row.adGroupId)) {
+      lastBudgetChangeByAdGroup.set(row.adGroupId, row.createdAt);
     }
   }
 
-  // Per-ad-set insights (3d / 7d / 30d CTR)
+  // Per-ad-group metrics (3d / 7d / 30d CTR)
   const dates = trailingDates(); // {since3d, since7d, since30d, today}
-  const adSetStates: AdSetState[] = [];
-  for (const s of relevantAdSets) {
+  const adGroupStates: AdSetState[] = [];
+  for (const g of relevantAdGroups) {
     const [m3, m7, m30] = await Promise.all([
-      client.getInsights(s.id, { since: dates.since3d, until: dates.today }),
-      client.getInsights(s.id, { since: dates.since7d, until: dates.today }),
-      client.getInsights(s.id, { since: dates.since30d, until: dates.today }),
+      client.getMetrics('adGroup', g.id, { since: dates.since3d, until: dates.today }),
+      client.getMetrics('adGroup', g.id, { since: dates.since7d, until: dates.today }),
+      client.getMetrics('adGroup', g.id, { since: dates.since30d, until: dates.today }),
     ]);
-    adSetStates.push({
-      id: s.id,
-      name: s.name,
-      isActive: s.status === 'ACTIVE',
-      currentDailyBudgetCents: parseInt(s.dailyBudget ?? '0', 10) || 0,
-      lastBudgetChangeAt: lastBudgetChangeByAdset.get(s.id) ?? null,
+    adGroupStates.push({
+      id: g.id,
+      name: g.name,
+      isActive: g.status === 'ENABLED',
+      currentDailyBudgetCents: g.dailyBudgetCents,
+      lastBudgetChangeAt: lastBudgetChangeByAdGroup.get(g.id) ?? null,
       metrics: {
         last3d: toWindowMetrics(m3),
         last7d: toWindowMetrics(m7),
@@ -235,7 +249,7 @@ async function checkCampaign(campaign: CampaignWithAccount): Promise<CheckResult
     spendTodayCents: today.spendCents,
     spendThisMonthCents: month.spendCents,
     spendLast1hCents,
-    adSets: adSetStates,
+    adSets: adGroupStates,
   };
 
   // ---- Decide (pure) ------------------------------------------------------
@@ -266,41 +280,42 @@ async function checkCampaign(campaign: CampaignWithAccount): Promise<CheckResult
             campaignId: campaign.id,
             action: 'pause',
             ruleId: action.rule,
-            adsetId: action.adSetIds.join(','),
+            adGroupId: action.adSetIds.join(','),
             reason: `[DRY RUN] ${action.reason}`,
             isDryRun: true,
-            metricsSnapshot: { adsetIds: action.adSetIds },
+            metricsSnapshot: { adGroupIds: action.adSetIds },
           },
         });
         continue;
       }
-      for (const adsetId of action.adSetIds) {
-        const meta = await client.pauseAdSet(adsetId);
+      for (const adGroupId of action.adSetIds) {
+        const res = await client.pauseAdGroup(adGroupId);
         executed += 1;
         await db.actionLog.create({
           data: {
             campaignId: campaign.id,
             action: 'pause',
             ruleId: action.rule,
-            adsetId,
+            adGroupId,
             reason: action.reason,
             isDryRun: false,
-            metricsSnapshot: { adsetIds: action.adSetIds },
-            metaApiResponse: { success: meta.success },
+            metricsSnapshot: { adGroupIds: action.adSetIds },
+            platformResponse: { success: res.success },
           },
         });
       }
       continue;
     }
 
-    // increase_budget / decrease_budget
+    // increase_budget / decrease_budget — executed on the ad group's CAMPAIGN
+    // budget (Google ad groups have no own budget).
     if (dryRun) {
       await db.actionLog.create({
         data: {
           campaignId: campaign.id,
           action: action.kind === 'increase_budget' ? 'increase_budget' : 'decrease_budget',
           ruleId: action.rule,
-          adsetId: action.adSetId,
+          adGroupId: action.adSetId,
           reason: `[DRY RUN] ${action.reason}`,
           isDryRun: true,
           oldValueCents: action.oldCents,
@@ -309,19 +324,35 @@ async function checkCampaign(campaign: CampaignWithAccount): Promise<CheckResult
       });
       continue;
     }
-    const meta = await client.setAdSetDailyBudget(action.adSetId, action.newCents);
+    const adGroup = adGroups.find((g) => g.id === action.adSetId);
+    if (!adGroup?.budgetId) {
+      await db.actionLog.create({
+        data: {
+          campaignId: campaign.id,
+          action: action.kind === 'increase_budget' ? 'increase_budget' : 'decrease_budget',
+          ruleId: action.rule,
+          adGroupId: action.adSetId,
+          reason: `[SKIPPED] ${action.reason} — no campaign budget found for ad group ${action.adSetId}`,
+          isDryRun: false,
+          oldValueCents: action.oldCents,
+          newValueCents: action.newCents,
+        },
+      });
+      continue;
+    }
+    const res = await client.setCampaignBudgetDailyCents(adGroup.budgetId, action.newCents);
     executed += 1;
     await db.actionLog.create({
       data: {
         campaignId: campaign.id,
         action: action.kind === 'increase_budget' ? 'increase_budget' : 'decrease_budget',
         ruleId: action.rule,
-        adsetId: action.adSetId,
+        adGroupId: action.adSetId,
         reason: action.reason,
         isDryRun: false,
         oldValueCents: action.oldCents,
         newValueCents: action.newCents,
-        metaApiResponse: { success: meta.success },
+        platformResponse: { success: res.success },
       },
     });
   }
@@ -346,22 +377,12 @@ async function checkCampaign(campaign: CampaignWithAccount): Promise<CheckResult
     data: { lastCheckedAt: new Date() },
   });
 
-  // ---- Token expiry watchdog ----------------------------------------------
-  const expiresSoon =
-    account.tokenExpiresAt.getTime() - Date.now() < 7 * 24 * 3600_000;
-  if (expiresSoon) {
-    await maybeAlert(
-      campaign,
-      'MANUAL',
-      'warning',
-      `Your Meta connection expires on ${account.tokenExpiresAt.toISOString().slice(0, 10)} — reconnect in Settings so BudgetGuard can keep protecting your budget.`,
-      dryRun,
-      24,
-    );
-  }
+  // Refresh tokens don't expire (they're revoked, which surfaces as HTTP 401/403
+  // and marks the account EXPIRED via the error path above) — no expiry watchdog
+  // needed on Google, unlike Meta's 60-day tokens.
 
   console.info(
-    `[check] ${campaign.name}: guardrail=${decision.guardrailTriggered ?? 'none'}, proposed=${decision.actions.length}, executed=${executed}${dryRun ? ' (DRY RUN)' : ''}, token=${maskToken(token)}`,
+    `[check] ${campaign.name}: guardrail=${decision.guardrailTriggered ?? 'none'}, proposed=${decision.actions.length}, executed=${executed}${dryRun ? ' (DRY RUN)' : ''}, token=${maskToken(account.refreshToken)}`,
   );
 
   return {
@@ -399,7 +420,7 @@ async function maybeAlert(
   });
   if (recent && !dryRun) return false; // already alerted recently
 
-  const user = await db.user.findUnique({ where: { id: campaign.metaAccount.userId } });
+  const user = await db.user.findUnique({ where: { id: campaign.googleAccount.userId } });
   await sendAlert({
     rule,
     severity,
@@ -409,13 +430,13 @@ async function maybeAlert(
   return true;
 }
 
-async function markTokenExpired(metaAccountId: string): Promise<void> {
+async function markTokenExpired(googleAccountId: string): Promise<void> {
   const db = getDb();
-  await db.metaAccount.update({
-    where: { id: metaAccountId },
+  await db.googleAccount.update({
+    where: { id: googleAccountId },
     data: { status: 'EXPIRED' },
   });
-  console.warn(`[meta] token expired for account ${metaAccountId} — user must reconnect`);
+  console.warn(`[google] auth failed for account ${googleAccountId} — user must reconnect`);
 }
 
 // ---------------------------------------------------------------------------

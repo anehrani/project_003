@@ -22,14 +22,14 @@ jobs:
       - name: Generate Prisma client
         run: npm run db:generate --workspace @budgetguard/db
 
-      - name: Unit tests (engine + Meta client)
+      - name: Unit tests (engine + Google Ads client)
         run: npm test
 
       - name: Typecheck
         run: |
           npx tsc -p packages/engine --noEmit
           npx tsc -p packages/db --noEmit
-          npx tsc -p packages/meta --noEmit
+          npx tsc -p packages/google --noEmit
           npx tsc -p apps/worker --noEmit
           npx tsc -p apps/web --noEmit
           npx tsc -p scripts --noEmit

@@ -1,8 +1,8 @@
 {
-  "name": "@budgetguard/meta",
+  "name": "@budgetguard/google",
   "version": "0.1.0",
   "private": true,
-  "description": "BudgetGuard Meta Marketing API client — insights, pause/resume, budget updates, token exchange.",
+  "description": "BudgetGuard Google Ads API client — GAQL metrics, pause/resume ad groups, campaign budget updates, OAuth token refresh.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
